@@ -15,6 +15,8 @@
  * Learn more at https://developers.cloudflare.com/workers/
  */
 
+import { GmailListResponse, GmailMessage, TokenResponse } from './types';
+
 export default {
 	async fetch(req) {
 		const url = new URL(req.url);
@@ -26,15 +28,115 @@ export default {
 	// The scheduled handler is invoked at the interval set in our wrangler.jsonc's
 	// [[triggers]] configuration.
 	async scheduled(event, env, ctx): Promise<void> {
-		// A Cron Trigger can make requests to other endpoints on the Internet,
-		// publish to a Queue, query a D1 Database, and much more.
-		//
-		// We'll keep it simple and make an API call to a Cloudflare API:
-		let resp = await fetch('https://api.cloudflare.com/client/v4/ips');
-		let wasSuccessful = resp.ok ? 'success' : 'fail';
+		console.log('Running Gmail cron…');
 
-		// You could store this result in KV, write to a D1 Database, or publish to a Queue.
-		// In this template, we'll just log the result:
-		console.log(`trigger fired at ${event.cron}: ${wasSuccessful}`);
+		const accessToken = await getAccessToken(env);
+
+		const searchRes = await gmailListEmails(accessToken, 'from:@krungthai.com newer_than:1d');
+
+		if (!searchRes.messages) {
+			console.log('No relevant emails');
+			return;
+		}
+
+		for (const msg of searchRes.messages) {
+			const { id } = msg;
+			if (!id) {
+				continue;
+			}
+
+			// 4. Fetch the full email
+			const email = await gmailGetEmail(accessToken, id);
+			const text = extractText(email);
+
+			console.log(email);
+
+			console.log(text);
+		}
+
+		console.log('Done.');
 	},
 } satisfies ExportedHandler<Env>;
+
+/**
+ * Fetches an access token from Google OAuth by exchanging the refresh token in the Cloudflare environment.
+ * @param env The Cloudflare environment object containing the refresh token.
+ * @returns A promise that resolves with the access token.
+ * @throws Error If the request to get the access token fails or if the access token is not present in the response.
+ */
+async function getAccessToken(env: Env) {
+	const url = 'https://oauth2.googleapis.com/token';
+
+	const params = new URLSearchParams();
+	params.set('client_id', env.GOOGLE_CLIENT_ID);
+	params.set('client_secret', env.GOOGLE_CLIENT_SECRET);
+	params.set('refresh_token', env.GOOGLE_REFRESH_TOKEN);
+	params.set('grant_type', 'refresh_token');
+
+	const res = await fetch(url, {
+		method: 'POST',
+		body: params,
+	});
+
+	if (!res.ok) {
+		throw new Error('Failed to get access token');
+	}
+
+	const json = (await res.json()) as TokenResponse;
+	if (!json.access_token) {
+		throw new Error('Failed to get access token');
+	}
+
+	return json.access_token;
+}
+
+/**
+ * Lists Gmail emails based on a query.
+ * @param token The access token to be used to authenticate the request.
+ * @param query The query string to be used to filter the emails.
+ * @returns A promise that resolves with the list of emails.
+ * @throws Error If the request to list emails fails.
+ */
+async function gmailListEmails(token: string, query: string) {
+	const url = `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=10`;
+
+	const res = await fetch(url, {
+		headers: { Authorization: `Bearer ${token}` },
+	});
+
+	if (!res.ok) {
+		throw new Error('Failed to list emails');
+	}
+
+	return (await res.json()) as GmailListResponse;
+}
+
+/**
+ * Fetches a Gmail email by ID.
+ * @param token The access token to be used to authenticate the request.
+ * @param id The Gmail email ID.
+ * @returns A promise that resolves with the email.
+ * @throws Error If the request to get the email fails.
+ */
+async function gmailGetEmail(token: string, id: string) {
+	const url = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=full`;
+
+	const res = await fetch(url, {
+		headers: { Authorization: `Bearer ${token}` },
+	});
+
+	if (!res.ok) {
+		throw new Error('Failed to get email');
+	}
+
+	return (await res.json()) as GmailMessage;
+}
+
+function extractText(msg: GmailMessage): string {
+	const parts = msg.payload?.parts || [];
+	const textPart = parts.find((p: any) => p.mimeType === 'text/plain');
+	if (!textPart?.body?.data) return '';
+
+	// Gmail encodes email body with URL-safe base64
+	return atob(textPart.body.data.replace(/-/g, '+').replace(/_/g, '/'));
+}

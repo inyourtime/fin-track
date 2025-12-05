@@ -9,6 +9,7 @@
 		"cf-typegen": "wrangler types"
 	},
 	"devDependencies": {
+		"googleapis": "^167.0.0",
 		"typescript": "^5.5.2",
 		"wrangler": "^4.53.0"
 	}
