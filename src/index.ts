@@ -82,12 +82,12 @@ async function getAccessToken(env: Env) {
 		throw new Error('Failed to get access token');
 	}
 
-	const json = (await res.json()) as TokenResponse;
-	if (!json.access_token) {
+	const { access_token } = await res.json<TokenResponse>();
+	if (!access_token) {
 		throw new Error('Failed to get access token');
 	}
 
-	return json.access_token;
+	return access_token;
 }
 
 /**
@@ -108,7 +108,7 @@ async function gmailListEmails(token: string, query: string) {
 		throw new Error('Failed to list emails');
 	}
 
-	return (await res.json()) as GmailListResponse;
+	return res.json<GmailListResponse>();
 }
 
 /**
@@ -129,7 +129,7 @@ async function gmailGetEmail(token: string, id: string) {
 		throw new Error('Failed to get email');
 	}
 
-	return (await res.json()) as GmailMessage;
+	return res.json<GmailMessage>();
 }
 
 function extractText(msg: GmailMessage): string {
